@@ -1,93 +1,72 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
-import { logger } from 'hono/logger'
 import { serveStatic } from 'hono/cloudflare-workers'
-import { renderer } from './renderer'
-import { authRoutes } from './routes/auth'
-import { tenantRoutes } from './routes/tenant'
-import { userRoutes } from './routes/user'
-import { paymentRoutes } from './routes/demo-payment'
-import { dashboardRoutes } from './routes/dashboard'
+import { billingRoutes } from './routes/billing'
 import { adminRoutes } from './routes/admin'
+import { dashboardRoutes } from './routes/dashboard'
+import { tenantApiRoutes } from './routes/tenant-api'
+import { paymentApiRoutes } from './routes/payment-api'
+import { authApiRoutes } from './routes/auth-api'
 
-type Bindings = {
-  // Future Cloudflare bindings
-  // DB: D1Database;
-  // SESSIONS: KVNamespace;
-  // ENVIRONMENT: string;
-  // API_BASE_URL: string;
-}
-
-const app = new Hono<{ Bindings: Bindings }>()
+const app = new Hono()
 
 // Middleware
-app.use('*', logger())
-app.use('/api/*', cors({
-  origin: ['http://localhost:3000', 'https://*.pages.dev'],
-  allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowHeaders: ['Content-Type', 'Authorization'],
-}))
+app.use('/api/*', cors())
 
-// Static assets
+// Serve static files
 app.use('/static/*', serveStatic({ root: './public' }))
 
-// Renderer for all HTML pages
-app.use('*', renderer)
-
 // API Routes
-app.route('/api/auth', authRoutes)
-app.route('/api/tenants', tenantRoutes)
-app.route('/api/users', userRoutes)
-app.route('/api/payment', paymentRoutes)
+app.route('/api/auth', authApiRoutes)
 app.route('/api/dashboard', dashboardRoutes)
+app.route('/api/tenant', tenantApiRoutes)
+app.route('/api/payment', paymentApiRoutes)
+app.route('/api/billing', billingRoutes)
 app.route('/api/admin', adminRoutes)
 
-// Main App Pages
+// Health check
+app.get('/api/health', (c) => {
+  return c.json({ status: 'ok', timestamp: new Date().toISOString() })
+})
+
+// Favicon handler to prevent 500 errors
+app.get('/favicon.ico', (c) => {
+  return c.notFound()
+})
+
+// Main application route
 app.get('/', (c) => {
-  return c.render(
-    <div className="min-h-screen bg-gray-50">
-      <div className="platform-gateway-app">
-        <div id="app"></div>
-      </div>
-    </div>,
-    { title: 'Platform Gateway - Enterprise Multi-Tenant Management' }
-  )
-})
+  return c.html(`
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Platform Gateway - Payment System</title>
+        <script src="https://cdn.tailwindcss.com"></script>
+        <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet">
+        <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/dayjs@1.11.10/dayjs.min.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/dayjs@1.11.10/plugin/relativeTime.js"></script>
+        <link href="/static/styles.css" rel="stylesheet">
+    </head>
+    <body class="bg-gray-100">
+        <!-- App Container -->
+        <div id="app">
+            <!-- Loading placeholder -->
+            <div class="min-h-screen bg-gray-50 flex items-center justify-center">
+                <div class="text-center">
+                    <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+                    <p class="text-gray-600">Loading Platform Gateway...</p>
+                </div>
+            </div>
+        </div>
 
-// Dashboard page
-app.get('/dashboard/*', (c) => {
-  return c.render(
-    <div className="min-h-screen bg-gray-50">
-      <div className="platform-gateway-app">
-        <div id="app"></div>
-      </div>
-    </div>,
-    { title: 'Dashboard - Platform Gateway' }
-  )
-})
-
-// Authentication pages
-app.get('/auth/*', (c) => {
-  return c.render(
-    <div className="min-h-screen bg-gray-50">
-      <div className="platform-gateway-app">
-        <div id="app"></div>
-      </div>
-    </div>,
-    { title: 'Authentication - Platform Gateway' }
-  )
-})
-
-// Admin pages
-app.get('/admin/*', (c) => {
-  return c.render(
-    <div className="min-h-screen bg-gray-50">
-      <div className="platform-gateway-app">
-        <div id="app"></div>
-      </div>
-    </div>,
-    { title: 'Admin Console - Platform Gateway' }
-  )
+        <!-- Load the main application -->
+        <script type="module" src="/static/app.js"></script>
+    </body>
+    </html>
+  `)
 })
 
 export default app
