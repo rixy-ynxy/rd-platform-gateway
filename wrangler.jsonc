@@ -1,0 +1,27 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "platform-gateway",
+  "compatibility_date": "2024-10-01",
+  "pages_build_output_dir": "./dist",
+  "compatibility_flags": ["nodejs_compat"],
+  
+  // Public variables for production
+  "vars": {
+    "ENVIRONMENT": "production",
+    "DEBUG": "false",
+    
+    // Feature Flags
+    "ENABLE_USER_REGISTRATION": "true",
+    "ENABLE_MULTI_TENANCY": "true",
+    "ENABLE_SSO": "false",
+    "ENABLE_STRIPE_CONNECT": "false",
+    "ENABLE_AUDIT_LOGGING": "true",
+    
+    // Rate Limiting
+    "RATE_LIMIT_MAX_REQUESTS": "100",
+    "RATE_LIMIT_WINDOW_MS": "900000",
+    
+    // Session Configuration
+    "SESSION_TIMEOUT_MINUTES": "480"
+  }
+}
