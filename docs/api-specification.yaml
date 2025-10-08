@@ -1,0 +1,1579 @@
+openapi: 3.0.3
+info:
+  title: Platform Gateway API
+  version: 1.0.0
+  description: |
+    **Platform Gateway**は、エンタープライズ級のマルチテナント管理プラットフォームです。
+    Keycloak認証、Stripe Connect決済処理、Cloudflare Edge技術を統合した包括的なAPIを提供します。
+    
+    ## 主な特徴
+    - 🔐 **Keycloak OIDC/JWT認証**: エンタープライズ級認証システム
+    - 💳 **Stripe Connect統合**: マルチテナント決済処理
+    - 🏢 **マルチテナント対応**: 組織単位でのデータ分離
+    - 🛡️ **ロールベースアクセス制御**: 細かい権限管理
+    - 📊 **リアルタイム分析**: ダッシュボード・メトリクス
+    - 🌐 **Cloudflare Edge**: 高速・グローバル配信
+    
+    ## 認証方式
+    - **JWT Bearer Token**: `Authorization: Bearer <token>`
+    - **デモモード**: 開発・テスト用の認証なしアクセス
+    
+    ## レート制限
+    - **一般API**: 100リクエスト/分
+    - **認証API**: 20リクエスト/分
+    - **決済API**: 50リクエスト/分
+  contact:
+    name: Platform Gateway API Support
+    url: https://github.com/rixy-ynxy/rd-ai-agent-generator
+  license:
+    name: MIT License
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: https://ac94bb42.platform-gateway.pages.dev/api
+    description: 本番環境
+  - url: http://localhost:3000/api
+    description: 開発環境
+
+security:
+  - bearerAuth: []
+  - demoMode: []
+
+paths:
+  # =============================================================================
+  # 認証エンドポイント
+  # =============================================================================
+  /auth/login:
+    get:
+      tags: [認証]
+      summary: Keycloakログインリダイレクト
+      description: |
+        Keycloak認証サーバーへのログインリダイレクトURLを取得します。
+        デモモードの場合は、モックログインURLを返却します。
+      parameters:
+        - name: redirect_uri
+          in: query
+          schema:
+            type: string
+            format: uri
+          description: ログイン後のリダイレクトURL
+        - name: state
+          in: query
+          schema:
+            type: string
+          description: CSRF保護用のstateパラメータ
+      responses:
+        200:
+          description: ログインURL取得成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      login_url:
+                        type: string
+                        format: uri
+                        example: "https://keycloak.example.com/auth/realms/platform/protocol/openid-connect/auth?..."
+                      redirect_uri:
+                        type: string
+                        format: uri
+                      state:
+                        type: string
+                      demo_mode:
+                        type: boolean
+                        description: デモモードの場合true
+      security: []
+
+  /auth/callback:
+    get:
+      tags: [認証]
+      summary: Keycloak認証コールバック
+      description: |
+        Keycloakからの認証コールバックを処理します。
+        認証コードをアクセストークンに交換し、ユーザー情報を取得します。
+      parameters:
+        - name: code
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Keycloakから返された認証コード
+        - name: state
+          in: query
+          required: true
+          schema:
+            type: string
+          description: CSRF保護用のstateパラメータ
+      responses:
+        200:
+          description: 認証成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        400:
+          description: 認証失敗
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security: []
+
+  /auth/me:
+    get:
+      tags: [認証]
+      summary: 現在のユーザー情報取得
+      description: |
+        現在認証されているユーザーの詳細情報を取得します。
+        権限、テナント情報、プロフィールを含みます。
+      responses:
+        200:
+          description: ユーザー情報取得成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/User'
+        401:
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /auth/logout:
+    post:
+      tags: [認証]
+      summary: ログアウト処理
+      description: |
+        現在のセッションを無効化し、Keycloakからもログアウトします。
+      responses:
+        200:
+          description: ログアウト成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: "Successfully logged out"
+
+  /auth/refresh:
+    post:
+      tags: [認証]
+      summary: トークンリフレッシュ
+      description: |
+        リフレッシュトークンを使用してアクセストークンを更新します。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                refresh_token:
+                  type: string
+                  description: リフレッシュトークン
+      responses:
+        200:
+          description: トークンリフレッシュ成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        401:
+          $ref: '#/components/responses/UnauthorizedError'
+
+  # =============================================================================
+  # テナント管理エンドポイント
+  # =============================================================================
+  /tenants:
+    get:
+      tags: [テナント管理]
+      summary: テナント一覧取得
+      description: |
+        アクセス可能なテナント一覧を取得します。
+        super_adminは全テナント、その他は所属テナントのみ。
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [active, suspended, trial, inactive]
+        - name: plan
+          in: query
+          schema:
+            type: string
+            enum: [starter, professional, enterprise, custom]
+      responses:
+        200:
+          description: テナント一覧取得成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PaginatedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Tenant'
+
+    post:
+      tags: [テナント管理]
+      summary: 新規テナント作成
+      description: |
+        新しいテナント（組織）を作成します。
+        super_adminのみ実行可能。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTenantRequest'
+      responses:
+        201:
+          description: テナント作成成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/Tenant'
+        403:
+          $ref: '#/components/responses/ForbiddenError'
+
+  /tenants/{tenantId}:
+    get:
+      tags: [テナント管理]
+      summary: 特定テナント取得
+      description: |
+        指定されたテナントの詳細情報を取得します。
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: テナントID
+      responses:
+        200:
+          description: テナント取得成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/Tenant'
+        404:
+          $ref: '#/components/responses/NotFoundError'
+
+    put:
+      tags: [テナント管理]
+      summary: テナント情報更新
+      description: |
+        テナントの基本情報を更新します。
+        tenant_owner以上の権限が必要。
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateTenantRequest'
+      responses:
+        200:
+          description: テナント更新成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/Tenant'
+
+    delete:
+      tags: [テナント管理]
+      summary: テナント削除
+      description: |
+        テナントを削除します。
+        super_adminのみ実行可能。
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: テナント削除成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: "Tenant deleted successfully"
+
+  # =============================================================================
+  # ユーザー管理エンドポイント
+  # =============================================================================
+  /users:
+    get:
+      tags: [ユーザー管理]
+      summary: ユーザー一覧取得
+      description: |
+        テナント内のユーザー一覧を取得します。
+        adminまたはmanager権限が必要。
+      parameters:
+        - name: tenantId
+          in: query
+          schema:
+            type: string
+          description: 対象テナントID (super_adminのみ)
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+        - name: role
+          in: query
+          schema:
+            type: string
+            enum: [super_admin, tenant_owner, admin, manager, developer, support, user]
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [active, inactive, pending]
+      responses:
+        200:
+          description: ユーザー一覧取得成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PaginatedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/User'
+
+    post:
+      tags: [ユーザー管理]
+      summary: ユーザー作成
+      description: |
+        新しいユーザーを作成し、テナントに招待します。
+        adminまたはmanager権限が必要。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserRequest'
+      responses:
+        201:
+          description: ユーザー作成成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/User'
+
+  /users/{userId}:
+    get:
+      tags: [ユーザー管理]
+      summary: ユーザー詳細取得
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: ユーザー取得成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/User'
+
+    put:
+      tags: [ユーザー管理]
+      summary: ユーザー情報更新
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUserRequest'
+      responses:
+        200:
+          description: ユーザー更新成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/User'
+
+    delete:
+      tags: [ユーザー管理]
+      summary: ユーザー削除
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: ユーザー削除成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+
+  # =============================================================================
+  # 決済処理エンドポイント
+  # =============================================================================
+  /payment/billing-summary:
+    get:
+      tags: [決済処理]
+      summary: 請求概要・使用状況取得
+      description: |
+        現在のプラン情報、使用状況、次回請求日などの
+        請求概要を取得します。
+      parameters:
+        - name: tenantId
+          in: query
+          schema:
+            type: string
+          description: 対象テナントID (権限があれば)
+      responses:
+        200:
+          description: 請求概要取得成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/BillingSummary'
+
+  /payment/methods:
+    get:
+      tags: [決済処理]
+      summary: 決済方法一覧取得
+      description: |
+        テナントに登録されている決済方法（クレジットカード等）
+        の一覧を取得します。
+      parameters:
+        - name: tenantId
+          in: query
+          schema:
+            type: string
+      responses:
+        200:
+          description: 決済方法一覧取得成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PaymentMethod'
+
+    post:
+      tags: [決済処理]
+      summary: 決済方法追加
+      description: |
+        新しい決済方法を追加します。
+        Stripe Payment Methodを使用。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                payment_method_id:
+                  type: string
+                  description: Stripe Payment Method ID
+                is_default:
+                  type: boolean
+                  description: デフォルト決済方法に設定するか
+      responses:
+        201:
+          description: 決済方法追加成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/PaymentMethod'
+
+  /payment/methods/{methodId}/set-default:
+    post:
+      tags: [決済処理]
+      summary: デフォルト決済方法設定
+      parameters:
+        - name: methodId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: デフォルト設定成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+
+  /payment/methods/{methodId}:
+    delete:
+      tags: [決済処理]
+      summary: 決済方法削除
+      parameters:
+        - name: methodId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: 決済方法削除成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+
+  /payment/invoices:
+    get:
+      tags: [決済処理]
+      summary: 請求書一覧取得
+      description: |
+        請求書の一覧を取得します。
+        ページネーション、ステータスフィルタリング対応。
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [paid, unpaid, overdue, draft]
+        - name: tenantId
+          in: query
+          schema:
+            type: string
+      responses:
+        200:
+          description: 請求書一覧取得成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PaginatedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Invoice'
+
+  /payment/invoices/{invoiceId}:
+    get:
+      tags: [決済処理]
+      summary: 個別請求書詳細
+      parameters:
+        - name: invoiceId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: 請求書詳細取得成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/Invoice'
+
+  /payment/invoices/{invoiceId}/download:
+    get:
+      tags: [決済処理]
+      summary: 請求書PDFダウンロード
+      description: |
+        請求書のPDFファイルをダウンロードします。
+      parameters:
+        - name: invoiceId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: PDFダウンロード成功
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+
+  /payment/connect-account:
+    post:
+      tags: [決済処理]
+      summary: Stripe Connectアカウント作成
+      description: |
+        テナント用のStripe Connectアカウントを作成します。
+      responses:
+        201:
+          description: Connectアカウント作成成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      account_id:
+                        type: string
+                        description: Stripe Connect アカウントID
+
+  /payment/connect-account/onboarding-link:
+    post:
+      tags: [決済処理]
+      summary: オンボーディングリンク作成
+      description: |
+        Stripe Connectアカウントの設定用
+        オンボーディングリンクを作成します。
+      responses:
+        201:
+          description: オンボーディングリンク作成成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      onboarding_url:
+                        type: string
+                        format: uri
+
+  /payment/connect-account/status:
+    get:
+      tags: [決済処理]
+      summary: Connectアカウントステータス
+      description: |
+        Stripe Connectアカウントの現在のステータスと
+        設定完了状況を取得します。
+      responses:
+        200:
+          description: ステータス取得成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/ConnectAccountStatus'
+
+  # =============================================================================
+  # ダッシュボード・分析エンドポイント
+  # =============================================================================
+  /dashboard/stats:
+    get:
+      tags: [ダッシュボード]
+      summary: ダッシュボード統計
+      description: |
+        ダッシュボード表示用の基本統計情報を取得します。
+        ユーザー数、API呼び出し数、収益等。
+      parameters:
+        - name: tenantId
+          in: query
+          schema:
+            type: string
+          description: 対象テナントID (権限があれば)
+        - name: timeframe
+          in: query
+          schema:
+            type: string
+            enum: [today, week, month, quarter, year]
+            default: month
+      responses:
+        200:
+          description: 統計情報取得成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/DashboardStats'
+
+  /dashboard/metrics/api-calls:
+    get:
+      tags: [ダッシュボード]
+      summary: API呼び出しメトリクス
+      description: |
+        時系列のAPI呼び出し数メトリクスを取得します。
+        チャート表示用データ。
+      parameters:
+        - name: timeframe
+          in: query
+          schema:
+            type: string
+            enum: [24h, 7d, 30d, 90d]
+            default: 7d
+        - name: granularity
+          in: query
+          schema:
+            type: string
+            enum: [hour, day, week]
+            default: day
+      responses:
+        200:
+          description: メトリクス取得成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Metric'
+
+  /dashboard/activities:
+    get:
+      tags: [ダッシュボード]
+      summary: 最近のアクティビティ
+      description: |
+        最近のシステムアクティビティログを取得します。
+        ユーザーログイン、API呼び出し、決済イベント等。
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [login, api_call, payment, user_action]
+      responses:
+        200:
+          description: アクティビティ取得成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Activity'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT Bearer Token (Keycloak発行)
+    
+    demoMode:
+      type: apiKey
+      in: header
+      name: X-Demo-Mode
+      description: デモモード用認証 (開発・テスト環境のみ)
+
+  schemas:
+    # =============================================================================
+    # 基本レスポンス型
+    # =============================================================================
+    ApiResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          description: API呼び出しの成功可否
+        message:
+          type: string
+          description: レスポンスメッセージ
+        data:
+          description: レスポンスデータ
+    
+    ErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: string
+          description: エラーメッセージ
+        code:
+          type: string
+          description: エラーコード
+        details:
+          type: object
+          description: エラー詳細情報
+    
+    PaginatedResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: array
+          description: データ配列
+        pagination:
+          type: object
+          properties:
+            total:
+              type: integer
+              description: 総件数
+            limit:
+              type: integer
+              description: 1ページあたりの件数
+            offset:
+              type: integer
+              description: オフセット
+            has_more:
+              type: boolean
+              description: 次ページの有無
+
+    # =============================================================================
+    # 認証関連
+    # =============================================================================
+    AuthResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: object
+          properties:
+            access_token:
+              type: string
+              description: JWTアクセストークン
+            refresh_token:
+              type: string
+              description: リフレッシュトークン
+            token_type:
+              type: string
+              example: "Bearer"
+            expires_in:
+              type: integer
+              description: トークン有効期限（秒）
+            user:
+              $ref: '#/components/schemas/User'
+
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          description: ユーザーID
+          example: "user-123abc"
+        email:
+          type: string
+          format: email
+          description: メールアドレス
+          example: "user@example.com"
+        name:
+          type: string
+          description: 表示名
+          example: "田中太郎"
+        username:
+          type: string
+          description: ユーザー名
+          example: "tanaka_taro"
+        tenant_id:
+          type: string
+          description: 所属テナントID
+          example: "tenant-acme-corp"
+        roles:
+          type: array
+          items:
+            type: string
+            enum: [super_admin, tenant_owner, admin, manager, developer, support, user]
+          description: ユーザーロール
+          example: ["admin", "manager"]
+        status:
+          type: string
+          enum: [active, inactive, pending]
+          description: ユーザーステータス
+          example: "active"
+        profile:
+          type: object
+          properties:
+            avatar_url:
+              type: string
+              format: uri
+            department:
+              type: string
+            job_title:
+              type: string
+            phone:
+              type: string
+        keycloak_id:
+          type: string
+          description: KeycloakでのユーザーID
+        last_login_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    # =============================================================================
+    # テナント関連
+    # =============================================================================
+    Tenant:
+      type: object
+      properties:
+        id:
+          type: string
+          description: テナントID
+          example: "tenant-acme-corp"
+        name:
+          type: string
+          description: 組織名
+          example: "ACME Corporation"
+        domain:
+          type: string
+          description: ドメイン名
+          example: "acme-corp.com"
+        status:
+          type: string
+          enum: [active, suspended, trial, inactive]
+          description: テナントステータス
+          example: "active"
+        plan:
+          type: string
+          enum: [starter, professional, enterprise, custom]
+          description: 契約プラン
+          example: "professional"
+        keycloak_realm:
+          type: string
+          description: Keycloakレルム名
+          example: "acme-corp-realm"
+        stripe_customer_id:
+          type: string
+          description: Stripe顧客ID
+        stripe_connect_account_id:
+          type: string
+          description: Stripe Connectアカウント
+        billing_email:
+          type: string
+          format: email
+          description: 請求先メールアドレス
+        billing_address:
+          type: string
+          description: 請求先住所
+        billing_country:
+          type: string
+          description: 請求先国
+        settings:
+          type: object
+          properties:
+            api_rate_limit:
+              type: integer
+            webhook_enabled:
+              type: boolean
+            audit_log_retention_days:
+              type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateTenantRequest:
+      type: object
+      required: [name, domain, billing_email]
+      properties:
+        name:
+          type: string
+          description: 組織名
+          example: "新しい会社"
+        domain:
+          type: string
+          description: ドメイン名
+          example: "newcompany.com"
+        plan:
+          type: string
+          enum: [starter, professional, enterprise, custom]
+          default: starter
+        billing_email:
+          type: string
+          format: email
+          description: 請求先メール
+          example: "billing@newcompany.com"
+        billing_address:
+          type: string
+        billing_country:
+          type: string
+
+    UpdateTenantRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        status:
+          type: string
+          enum: [active, suspended, trial, inactive]
+        plan:
+          type: string
+          enum: [starter, professional, enterprise, custom]
+        billing_email:
+          type: string
+          format: email
+        billing_address:
+          type: string
+        billing_country:
+          type: string
+        settings:
+          type: object
+
+    # =============================================================================
+    # ユーザー関連
+    # =============================================================================
+    CreateUserRequest:
+      type: object
+      required: [email, name, roles]
+      properties:
+        email:
+          type: string
+          format: email
+          example: "newuser@example.com"
+        name:
+          type: string
+          example: "新規ユーザー"
+        username:
+          type: string
+        roles:
+          type: array
+          items:
+            type: string
+            enum: [admin, manager, developer, support, user]
+          example: ["user"]
+        profile:
+          type: object
+          properties:
+            department:
+              type: string
+            job_title:
+              type: string
+            phone:
+              type: string
+        send_invitation:
+          type: boolean
+          default: true
+          description: 招待メールを送信するか
+
+    UpdateUserRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        roles:
+          type: array
+          items:
+            type: string
+        status:
+          type: string
+          enum: [active, inactive, pending]
+        profile:
+          type: object
+
+    # =============================================================================
+    # 決済関連
+    # =============================================================================
+    BillingSummary:
+      type: object
+      properties:
+        current_plan:
+          type: object
+          properties:
+            name:
+              type: string
+              example: "Professional"
+            price:
+              type: number
+              example: 99.00
+            currency:
+              type: string
+              example: "USD"
+            billing_cycle:
+              type: string
+              enum: [monthly, yearly]
+              example: "monthly"
+        usage:
+          type: object
+          properties:
+            api_calls:
+              type: object
+              properties:
+                current:
+                  type: integer
+                  example: 15420
+                limit:
+                  type: integer
+                  example: 50000
+                percentage:
+                  type: number
+                  example: 30.84
+            users:
+              type: object
+              properties:
+                current:
+                  type: integer
+                  example: 12
+                limit:
+                  type: integer
+                  example: 50
+            storage:
+              type: object
+              properties:
+                current:
+                  type: number
+                  example: 2.3
+                limit:
+                  type: number
+                  example: 100
+                unit:
+                  type: string
+                  example: "GB"
+        next_billing_date:
+          type: string
+          format: date
+          example: "2024-11-01"
+        payment_method:
+          $ref: '#/components/schemas/PaymentMethod'
+
+    PaymentMethod:
+      type: object
+      properties:
+        id:
+          type: string
+          example: "pm_1234567890"
+        type:
+          type: string
+          enum: [card, bank_account]
+          example: "card"
+        card:
+          type: object
+          properties:
+            brand:
+              type: string
+              example: "visa"
+            last4:
+              type: string
+              example: "4242"
+            exp_month:
+              type: integer
+              example: 12
+            exp_year:
+              type: integer
+              example: 2025
+        is_default:
+          type: boolean
+          example: true
+        stripe_payment_method_id:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    Invoice:
+      type: object
+      properties:
+        id:
+          type: string
+          example: "inv_1234567890"
+        tenant_id:
+          type: string
+        amount_total:
+          type: number
+          example: 99.00
+        amount_paid:
+          type: number
+          example: 99.00
+        currency:
+          type: string
+          example: "USD"
+        status:
+          type: string
+          enum: [paid, unpaid, overdue, draft]
+          example: "paid"
+        stripe_invoice_id:
+          type: string
+        invoice_number:
+          type: string
+          example: "INV-2024-001"
+        billing_period_start:
+          type: string
+          format: date
+        billing_period_end:
+          type: string
+          format: date
+        due_date:
+          type: string
+          format: date
+        paid_at:
+          type: string
+          format: date-time
+        invoice_pdf:
+          type: string
+          format: uri
+        line_items:
+          type: array
+          items:
+            type: object
+            properties:
+              description:
+                type: string
+              quantity:
+                type: integer
+              unit_amount:
+                type: number
+              amount:
+                type: number
+        created_at:
+          type: string
+          format: date-time
+
+    ConnectAccountStatus:
+      type: object
+      properties:
+        account_id:
+          type: string
+        charges_enabled:
+          type: boolean
+        payouts_enabled:
+          type: boolean
+        details_submitted:
+          type: boolean
+        requirements:
+          type: object
+          properties:
+            currently_due:
+              type: array
+              items:
+                type: string
+            eventually_due:
+              type: array
+              items:
+                type: string
+            disabled_reason:
+              type: string
+        capabilities:
+          type: object
+
+    # =============================================================================
+    # ダッシュボード関連
+    # =============================================================================
+    DashboardStats:
+      type: object
+      properties:
+        users:
+          type: object
+          properties:
+            total:
+              type: integer
+              example: 245
+            active:
+              type: integer
+              example: 189
+            growth:
+              type: number
+              example: 12.5
+              description: 成長率（%）
+        api_calls:
+          type: object
+          properties:
+            today:
+              type: integer
+              example: 1543
+            this_month:
+              type: integer
+              example: 45670
+            growth:
+              type: number
+              example: 8.2
+        revenue:
+          type: object
+          properties:
+            this_month:
+              type: number
+              example: 24350.00
+            last_month:
+              type: number
+              example: 22100.00
+            currency:
+              type: string
+              example: "USD"
+            growth:
+              type: number
+              example: 10.2
+        tenants:
+          type: object
+          properties:
+            total:
+              type: integer
+              example: 34
+            active:
+              type: integer
+              example: 28
+            trial:
+              type: integer
+              example: 6
+
+    Metric:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+          example: "2024-10-04T12:00:00Z"
+        value:
+          type: number
+          example: 1250
+        label:
+          type: string
+          example: "API Calls"
+
+    Activity:
+      type: object
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          enum: [login, api_call, payment, user_action]
+        description:
+          type: string
+          example: "User logged in successfully"
+        user_id:
+          type: string
+        tenant_id:
+          type: string
+        ip_address:
+          type: string
+        user_agent:
+          type: string
+        metadata:
+          type: object
+        created_at:
+          type: string
+          format: date-time
+
+  responses:
+    UnauthorizedError:
+      description: 認証エラー - 有効なトークンが必要
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error: "Unauthorized: Invalid or missing token"
+            code: "AUTH_REQUIRED"
+
+    ForbiddenError:
+      description: 認可エラー - 権限不足
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error: "Forbidden: Insufficient permissions"
+            code: "INSUFFICIENT_PERMISSIONS"
+
+    NotFoundError:
+      description: リソースが見つからない
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error: "Resource not found"
+            code: "NOT_FOUND"
+
+    ValidationError:
+      description: バリデーションエラー
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error: "Validation failed"
+            code: "VALIDATION_ERROR"
+            details:
+              field: "email"
+              message: "Invalid email format"
+
+tags:
+  - name: 認証
+    description: Keycloak OIDC/JWT認証関連API
+  - name: テナント管理
+    description: マルチテナント組織管理API
+  - name: ユーザー管理
+    description: ユーザー・ロール管理API
+  - name: 決済処理
+    description: Stripe Connect決済・請求API
+  - name: ダッシュボード
+    description: 分析・メトリクス・統計API

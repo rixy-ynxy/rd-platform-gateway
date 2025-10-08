@@ -1,0 +1,67 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "webapp",
+  "compatibility_date": "2025-10-03",
+  "pages_build_output_dir": "./dist",
+  "compatibility_flags": ["nodejs_compat"],
+  
+  // Production public variables
+  "vars": {
+    "ENVIRONMENT": "production",
+    "DEBUG": "false",
+    "APP_BASE_URL": "https://your-production-domain.com",
+    "API_BASE_URL": "https://your-production-domain.com/api",
+    
+    // Keycloak Production Configuration
+    "KEYCLOAK_BASE_URL": "https://your-production-keycloak.com/auth",
+    "KEYCLOAK_REALM": "production-realm",
+    "KEYCLOAK_CLIENT_ID": "production-client-id",
+    
+    // Stripe Production Configuration
+    "STRIPE_PUBLISHABLE_KEY": "pk_live_your_production_stripe_key",
+    
+    // Feature Flags
+    "ENABLE_USER_REGISTRATION": "true",
+    "ENABLE_MULTI_TENANCY": "true",
+    "ENABLE_SSO": "true",
+    "ENABLE_STRIPE_CONNECT": "true",
+    "ENABLE_AUDIT_LOGGING": "true",
+    
+    // Rate Limiting (more strict in production)
+    "RATE_LIMIT_MAX_REQUESTS": "50",
+    "RATE_LIMIT_WINDOW_MS": "900000",
+    
+    // Session Configuration
+    "SESSION_TIMEOUT_MINUTES": "240",
+    
+    // CORS Configuration
+    "CORS_ORIGINS": "https://your-production-domain.com,https://your-admin-domain.com",
+    "ALLOWED_HOSTS": "your-production-domain.com,your-admin-domain.com"
+  },
+  
+  // Production D1 Database
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "webapp-production",
+      "database_id": "your-production-database-id"
+    }
+  ],
+  
+  // Production KV storage
+  "kv_namespaces": [
+    {
+      "binding": "CACHE",
+      "id": "your-production-kv-id",
+      "preview_id": "your-production-kv-preview-id"
+    }
+  ],
+  
+  // Production R2 storage
+  "r2_buckets": [
+    {
+      "binding": "FILES",
+      "bucket_name": "webapp-production-files"
+    }
+  ]
+}
